@@ -550,17 +550,24 @@ const DB = {
   genId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); },
   add(type,item){ item.id=this.genId(); item.createdAt=new Date().toISOString(); const a=this.getAll(type); a.unshift(item); this.setAll(type,a); return item; },
   update(type,id,data){ const a=this.getAll(type); const idx=a.findIndex(i=>i.id===id); if(idx!==-1){ a[idx]={...a[idx],...data,updatedAt:new Date().toISOString()}; this.setAll(type,a); } },
-  remove(type,id){ this.setAll(type,this.getAll(type).filter(i=>i.id!==id)); },
+  // 删除 + 墓碑（用于跨设备同步删除）
+  remove(type,id){ this.setAll(type,this.getAll(type).filter(i=>i.id!==id)); const t=this.get('_deleted')||[]; t.push({type,id,ts:Date.now()}); this.set('_deleted',t); },
   exportAll(){
-    const d={settings:this.getSettings()};
+    const d={settings:this.getSettings(),_deleted:this.get('_deleted')||[]};
     ['daily','milestone','preference','taboo','expense','wish','holiday','conflict','memorial'].forEach(k=>d[k]=this.getAll(k));
     return d;
   },
   importAll(data){
     if(data.settings)this.setSettings(data.settings);
+    // 合并墓碑
+    if(data._deleted){const tl=this.get('_deleted')||[];data._deleted.forEach(dt=>{if(!tl.find(e=>e.id===dt.id&&e.type===dt.type))tl.push(dt);});this.set('_deleted',tl);}
     ['daily','milestone','preference','taboo','expense','wish','holiday','conflict','memorial'].forEach(k=>{
       if(data[k]&&Array.isArray(data[k]))this.setAll(k,data[k]);
     });
+    // 执行墓碑：删除本地已被远程删除的项
+    (this.get('_deleted')||[]).forEach(dt=>{const a=this.getAll(dt.type); this.setAll(dt.type,a.filter(i=>i.id!==dt.id));});
+    // 清理7天前的旧墓碑
+    const weekAgo=Date.now()-7*86400000; this.set('_deleted',(this.get('_deleted')||[]).filter(t=>t.ts>weekAgo));
   }
 };
 
@@ -619,6 +626,14 @@ const Sync = {
         mergedList.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
         DB.setAll(k,mergedList);
       });
+      // 处理远端墓碑：删除本地已被远端删除的项
+      if(remote._deleted&&remote._deleted.length>0){
+        remote._deleted.forEach(dt=>{
+          const a=DB.getAll(dt.type);
+          DB.setAll(dt.type,a.filter(i=>i.id!==dt.id));
+        });
+        merged=true;
+      }
       // 合并设置：保留本地已有的值，远程填补空缺
       if(remote.settings){
         const localS=DB.getSettings();
@@ -1029,7 +1044,7 @@ const App = {
     URL.revokeObjectURL(a.href);toast('已导出');
   },
   importData(){document.getElementById('fileInput').click();},
-  clearData(){if(!confirm('确认清空全部数据？此操作不可撤销！'))return;if(!confirm('再次确认：真的清空？'))return;['daily','milestone','preference','taboo','expense','wish','holiday','conflict','memorial','settings','_lastSync'].forEach(k=>localStorage.removeItem('lovenotes_'+k));this.renderAll();toast('已清空');}
+  clearData(){if(!confirm('确认清空全部数据？此操作不可撤销！'))return;if(!confirm('再次确认：真的清空？'))return;['daily','milestone','preference','taboo','expense','wish','holiday','conflict','memorial','settings','_deleted','_lastSync'].forEach(k=>localStorage.removeItem('lovenotes_'+k));this.renderAll();toast('已清空');}
 };
 
 document.addEventListener('DOMContentLoaded',()=>App.init());
