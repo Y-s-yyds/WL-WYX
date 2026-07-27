@@ -569,13 +569,18 @@ const Sync = {
   pushing: false,
   pushPending: false,
   _statusEl: null,
+  _ready: false,
+  _readyPromise: null,
   _status(el){ this._statusEl=el||document.getElementById('syncStatus'); },
   init(){
     this._status();
-    this.pull().then(updated=>{
+    this._readyPromise = this.pull().then(updated=>{
       if(updated)App.renderAll();
+      this._ready = true;
       this._statusEl.textContent='✓ 云端已同步';
       setTimeout(()=>{if(this._statusEl)this._statusEl.textContent='';},4000);
+    }).catch(()=>{
+      this._ready = true;
     });
     setInterval(()=>{if(!document.hidden)this.pull();},30000);
   },
@@ -584,11 +589,12 @@ const Sync = {
       const resp=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+DATA_PATH+'?ref=main',{
         headers:{Authorization:'token '+TOKEN,Accept:'application/vnd.github.v3+json'}
       });
-      if(resp.status===404){return false;} // 首次使用无数据
+      if(resp.status===404){return false;}
       if(!resp.ok){this._statusEl.textContent='⚠️ 拉取失败 ('+resp.status+')';return false;}
       const d=await resp.json();
       const remote=JSON.parse(atob(d.content));
       const sha=d.sha;
+      this._lastSha=sha;
       if(!remote||!remote._timestamp)return false;
       const localTs=DB.get('_lastSync')||0;
       if(remote._timestamp<=localTs)return false;
@@ -603,18 +609,19 @@ const Sync = {
       });
       if(remote.settings){ const ls=DB.getSettings(); if(ls.startDate&&!remote.settings.startDate)remote.settings.startDate=ls.startDate; DB.setSettings(remote.settings); }
       DB.set('_lastSync',remote._timestamp);
-      this._lastSha=sha;
       return true;
     }catch(e){this._statusEl.textContent='⚠️ 同步异常';return false;}
   },
   async push(){
     if(this.pushing){this.pushPending=true;return;}
     this.pushing=true;this.pushPending=false;
+    // 等待初始 pull 完成
+    if(!this._ready && this._readyPromise){ await this._readyPromise; }
     this._statusEl.textContent='⏳ 正在同步…';
     try{
       const data=DB.exportAll();
       data._timestamp=Date.now();
-      const content=btoa(unescape(encodeURIComponent(JSON.stringify(data,null,2))));
+      const content=btoa(unescape(encodeURIComponent(JSON.stringify(data))));
       const body={message:'sync: '+new Date().toISOString(),content,sha:this._lastSha||undefined,branch:'main'};
       const resp=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+DATA_PATH,{
         method:'PUT',headers:{Authorization:'token '+TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)
