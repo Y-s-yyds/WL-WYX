@@ -584,9 +584,8 @@ const Sync = {
     this._statusEl.textContent='⏳ 连接云…';
     this._readyPromise = this.pull().then(updated=>{
       this._ready = true;
-      if(updated)App.renderAll();
-      if(this._lastSha)this._statusEl.textContent='✓ 云端已同步';
-      else this._statusEl.textContent='✓ 本地就绪';
+      if(updated){App.renderAll();this._statusEl.textContent='✓ 已同步';}
+      else{this._statusEl.textContent='✓ 本地就绪';}
       setTimeout(()=>{if(this._statusEl)this._statusEl.textContent='';},4000);
     }).catch(()=>{
       this._ready = true;
@@ -608,19 +607,44 @@ const Sync = {
       if(!remote||!remote._timestamp)return false;
       const localTs=DB.get('_lastSync')||0;
       if(remote._timestamp<=localTs)return false;
+      let merged=false;
       ['daily','milestone','preference','taboo','expense','wish','holiday','conflict','memorial'].forEach(k=>{
         if(!remote[k])return;
         const local=DB.getAll(k);
         const localIds=new Set(local.map(i=>i.id));
-        const merged=[...local];
-        remote[k].forEach(ri=>{if(!localIds.has(ri.id))merged.push(ri);});
-        merged.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
-        DB.setAll(k,merged);
+        const mergedList=[...local];
+        const newItems=[];
+        remote[k].forEach(ri=>{if(!localIds.has(ri.id)){mergedList.push(ri);newItems.push(ri);}});
+        if(newItems.length>0){merged=true;}
+        mergedList.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+        DB.setAll(k,mergedList);
       });
-      if(remote.settings){const ls=DB.getSettings();if(ls.startDate&&!remote.settings.startDate)remote.settings.startDate=ls.startDate;DB.setSettings(remote.settings);}
+      // 合并设置：保留本地已有的值，远程填补空缺
+      if(remote.settings){
+        const localS=DB.getSettings();
+        const mergedS={...remote.settings};
+        if(!mergedS.myName&&localS.myName)mergedS.myName=localS.myName;
+        if(!mergedS.nickname&&localS.nickname)mergedS.nickname=localS.nickname;
+        if(!mergedS.startDate&&localS.startDate)mergedS.startDate=localS.startDate;
+        if(!mergedS.myBirthday&&localS.myBirthday)mergedS.myBirthday=localS.myBirthday;
+        if(!mergedS.birthday&&localS.birthday)mergedS.birthday=localS.birthday;
+        DB.setSettings(mergedS);
+      }
       DB.set('_lastSync',remote._timestamp);
+      // 如果合并了新数据，推回云端让另一个设备也能看到
+      if(merged){this._pushMerged();}
       return true;
     }catch(e){this._statusEl.textContent='⚠️ 拉取出错';return false;}
+  },
+
+  // 静默推送合并后的数据（不更新状态文字）
+  _pushMerged(){
+    const data=DB.exportAll();data._timestamp=Date.now();
+    const content=this._b64enc(JSON.stringify(data));
+    fetch('https://api.github.com/repos/'+REPO+'/contents/'+DATA_PATH,{
+      method:'PUT',headers:{Authorization:'token '+TOKEN,'Content-Type':'application/json'},
+      body:JSON.stringify({message:'sync: '+new Date().toISOString(),content,sha:this._lastSha,branch:'main'})
+    }).then(resp=>resp.json()).then(d=>{if(d.content){this._lastSha=d.content.sha;DB.set('_lastSync',data._timestamp);}}).catch(()=>{});
   },
 
   async push(){
