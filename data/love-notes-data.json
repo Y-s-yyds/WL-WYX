@@ -1,9 +1,9 @@
 {
   "settings": {
     "startDate": "2026-07-27T20:41:30",
-    "myName": "ç·",
+    "myName": "男",
     "myBirthday": "2026-07-27",
-    "nickname": "å¥³",
+    "nickname": "女",
     "birthday": "2026-07-27"
   },
   "daily": [
@@ -46,5 +46,5 @@
   "holiday": [],
   "conflict": [],
   "memorial": [],
-  "_timestamp": 1785164465665
+  "_timestamp": 1785164468209
 }
