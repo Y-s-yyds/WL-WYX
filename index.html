@@ -637,6 +637,19 @@ const Sync = {
         method:'PUT',headers:{Authorization:'token '+TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body)
       });
       if(resp.ok){const d=await resp.json();this._lastSha=d.content.sha;DB.set('_lastSync',data._timestamp);this._statusEl.textContent='✓ 已同步';}
+      else if(resp.status===422||resp.status===409){
+        // SHA 冲突：重新拉取最新 SHA 后重试
+        const rePull=await this.pull();
+        if(rePull||this._lastSha){
+          const retryContent=this._b64enc(JSON.stringify(data));
+          const retryBody={message:'sync(retry): '+new Date().toISOString(),content:retryContent,sha:this._lastSha||undefined,branch:'main'};
+          const r2=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+DATA_PATH,{
+            method:'PUT',headers:{Authorization:'token '+TOKEN,'Content-Type':'application/json'},body:JSON.stringify(retryBody)
+          });
+          if(r2.ok){const d2=await r2.json();this._lastSha=d2.content.sha;DB.set('_lastSync',data._timestamp);this._statusEl.textContent='✓ 已同步';}
+          else{const e2=await r2.json();this._statusEl.textContent='⚠️ '+e2.message;}
+        }else{this._statusEl.textContent='⚠️ 重试失败';}
+      }
       else{const e=await resp.json();this._statusEl.textContent='⚠️ '+e.message;}
     }catch(e){this._statusEl.textContent='⚠️ 网络断';}
     finally{this.pushing=false;if(this.pushPending)this.push();setTimeout(()=>{if(this._statusEl)this._statusEl.textContent='';},5000);}
