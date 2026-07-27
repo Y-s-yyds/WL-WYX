@@ -598,7 +598,7 @@ const Sync = {
       this._ready = true;
       this._statusEl.textContent='⚠️ 离线模式';
     });
-    setInterval(()=>{if(!document.hidden)this.pull();},30000);
+    setInterval(()=>{if(!document.hidden)this.pull().then(u=>{if(u)App.renderAll();});},30000);
   },
 
   async pull(){
@@ -654,12 +654,14 @@ const Sync = {
 
   // 静默推送合并后的数据（不更新状态文字）
   _pushMerged(){
+    if(this.pushing){this.pushPending=true;return;}
+    this.pushing=true;
     const data=DB.exportAll();data._timestamp=Date.now();
     const content=this._b64enc(JSON.stringify(data));
     fetch('https://api.github.com/repos/'+REPO+'/contents/'+DATA_PATH,{
       method:'PUT',headers:{Authorization:'token '+TOKEN,'Content-Type':'application/json'},
       body:JSON.stringify({message:'sync: '+new Date().toISOString(),content,sha:this._lastSha,branch:'main'})
-    }).then(resp=>resp.json()).then(d=>{if(d.content){this._lastSha=d.content.sha;DB.set('_lastSync',data._timestamp);}}).catch(()=>{});
+    }).then(resp=>resp.json()).then(d=>{if(d.content){this._lastSha=d.content.sha;DB.set('_lastSync',data._timestamp);}else if(d.message){console.log('merge push:',d.message);}}).catch(e=>console.log('merge push err:',e)).finally(()=>{this.pushing=false;if(this.pushPending)this.push();});
   },
 
   async push(){
